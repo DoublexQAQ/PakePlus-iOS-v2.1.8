@@ -24,116 +24,100 @@ window.open = function (url, target, features) {
 }
 
 document.addEventListener('click', hookClick, { capture: true })
-// ===============================
-// PakePlus Mobile Video Pro
-// Android WebView ONLY
-// ===============================
-;(function () {
-  'use strict'
 
-  const ua = navigator.userAgent
-  const isAndroid = /Android/i.test(ua)
-  const isWebView = /wv|PakePlus|WebView/i.test(ua)
-  if (!isAndroid || !isWebView) return
+(function () {
+    if (window.__ACG_HOOK__) return;
+    window.__ACG_HOOK__ = true;
 
-  console.log('[PakePlus] Mobile Video Pro Enabled')
+    console.log("[PakePlus] ACG Video Helper Loaded");
 
-  // ===============================
-  // 主视频识别
-  // ===============================
-  function isMainVideo (v) {
-    const rect = v.getBoundingClientRect()
-    return (
-      rect.width > window.innerWidth * 0.3 &&
-      rect.height > window.innerHeight * 0.3 &&
-      v.controls &&
-      !v.muted
-    )
-  }
+    /* ========= 设备识别 ========= */
+    const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
-  // ===============================
-  // 自动横屏（仅主视频）
-  // ===============================
-  function lockLandscape () {
-    screen.orientation?.lock?.('landscape').catch(() => {})
-  }
+    /* ========= 存储视频 URL ========= */
+    const videoUrls = new Set();
 
-  function unlock () {
-    screen.orientation?.unlock?.()
-  }
+    /* ========= Hook fetch ========= */
+    const rawFetch = window.fetch;
+    window.fetch = function (...args) {
+        const url = args[0]?.url || args[0];
+        if (typeof url === "string" && /\.(m3u8|mp4)(\?|$)/i.test(url)) {
+            videoUrls.add(url);
+            console.log("[Video URL]", url);
+        }
+        return rawFetch.apply(this, args);
+    };
 
-  function bindVideo (v) {
-    if (v.__bind) return
-    v.__bind = true
+    /* ========= Hook XHR ========= */
+    const rawOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+        if (typeof url === "string" && /\.(m3u8|mp4)(\?|$)/i.test(url)) {
+            videoUrls.add(url);
+            console.log("[Video URL]", url);
+        }
+        return rawOpen.apply(this, arguments);
+    };
 
-    v.addEventListener('play', () => {
-      if (isMainVideo(v)) {
-        console.log('[Video] main video play → landscape')
-        lockLandscape()
-      }
-    })
+    /* ========= 自动横屏（手机端） ========= */
+    function lockLandscape() {
+        if (!isMobile) return;
+        if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock("landscape").catch(() => {});
+        }
+    }
 
-    v.addEventListener('pause', unlock)
-    v.addEventListener('ended', unlock)
-  }
+    /* ========= 下载按钮 ========= */
+    function createDownloadBtn() {
+        if (document.getElementById("acg-download-btn")) return;
 
-  // 仅监听 video 插入，不全量扫描
-  new MutationObserver(ms => {
-    ms.forEach(m =>
-      m.addedNodes.forEach(n => {
-        if (n.tagName === 'VIDEO') bindVideo(n)
-      })
-    )
-  }).observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  })
+        const btn = document.createElement("div");
+        btn.id = "acg-download-btn";
+        btn.innerText = "⬇ 下载";
+        btn.style.cssText = `
+            position: fixed;
+            top: 80px;
+            right: 10px;
+            z-index: 99999;
+            background: rgba(0,0,0,.6);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        `;
 
-  // ===============================
-  // 视频嗅探（强过滤）
-  // ===============================
-  const videoMap = new Map()
+        btn.onclick = () => {
+            if (!videoUrls.size) {
+                alert("未捕获到视频地址");
+                return;
+            }
 
-  function validVideo (url) {
-    if (!url) return false
-    if (!/(\.mp4|\.m3u8|\.webm)/i.test(url)) return false
-    if (/ad|track|analytics/i.test(url)) return false
-    return true
-  }
+            const url = [...videoUrls][videoUrls.size - 1];
 
-  function collect (url) {
-    if (!validVideo(url)) return
-    if (videoMap.has(url)) return
-    videoMap.set(url, Date.now())
-    console.log('%c[📥 Video]', 'color:#4caf50', url)
-  }
+            if (url.endsWith(".m3u8")) {
+                prompt("复制 m3u8 地址（可用 N_m3u8DL / ffmpeg）：", url);
+            } else {
+                window.open(url);
+            }
+        };
 
-  // video/source
-  document.addEventListener(
-    'loadedmetadata',
-    e => collect(e.target?.currentSrc),
-    true
-  )
+        document.body.appendChild(btn);
+    }
 
-  // fetch（只嗅探 media）
-  const rawFetch = window.fetch
-  window.fetch = function (input, init) {
-    const url = input?.toString()
-    collect(url)
-    return rawFetch.apply(this, arguments)
-  }
+    /* ========= 监听 ArtPlayer ========= */
+    const observer = new MutationObserver(() => {
+        const video = document.querySelector("video");
+        const player = document.querySelector(".art-video-player");
 
-  // xhr
-  const rawOpen = XMLHttpRequest.prototype.open
-  XMLHttpRequest.prototype.open = function (m, url) {
-    collect(url)
-    return rawOpen.apply(this, arguments)
-  }
+        if (video && player) {
+            createDownloadBtn();
 
-  // ===============================
-  // 导出接口（手机端用）
-  // ===============================
-  window.__PAKE_MOBILE_VIDEO__ = () =>
-    Array.from(videoMap.keys())
+            video.addEventListener("fullscreenchange", lockLandscape);
+            video.addEventListener("webkitfullscreenchange", lockLandscape);
 
-})()
+            observer.disconnect();
+            console.log("[PakePlus] ArtPlayer Ready");
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
